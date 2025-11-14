@@ -3,6 +3,122 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const authBtn = document.getElementById("auth-btn");
+  const authStatus = document.getElementById("auth-status");
+  const loginModal = document.getElementById("login-modal");
+  const loginForm = document.getElementById("login-form");
+  const loginMessage = document.getElementById("login-message");
+  const closeBtn = document.querySelector(".close");
+
+  // State management
+  let isAuthenticated = false;
+  let currentToken = null;
+  let currentUsername = null;
+
+  // Load authentication state from localStorage
+  function loadAuthState() {
+    const stored = localStorage.getItem("teacherAuth");
+    if (stored) {
+      const auth = JSON.parse(stored);
+      isAuthenticated = auth.authenticated;
+      currentToken = auth.token;
+      currentUsername = auth.username;
+      updateAuthUI();
+    }
+  }
+
+  // Save authentication state to localStorage
+  function saveAuthState() {
+    if (isAuthenticated) {
+      localStorage.setItem("teacherAuth", JSON.stringify({
+        authenticated: isAuthenticated,
+        token: currentToken,
+        username: currentUsername
+      }));
+    }
+  }
+
+  // Update UI based on authentication state
+  function updateAuthUI() {
+    if (isAuthenticated) {
+      authBtn.textContent = "Logout";
+      authStatus.textContent = `Logged in as: ${currentUsername}`;
+      authStatus.className = "auth-status authenticated";
+    } else {
+      authBtn.textContent = "Teacher Login";
+      authStatus.textContent = "";
+      authStatus.className = "auth-status hidden";
+    }
+  }
+
+  // Handle auth button click
+  authBtn.addEventListener("click", () => {
+    if (isAuthenticated) {
+      // Logout
+      isAuthenticated = false;
+      currentToken = null;
+      currentUsername = null;
+      localStorage.removeItem("teacherAuth");
+      updateAuthUI();
+      fetchActivities();
+    } else {
+      // Show login modal
+      loginModal.classList.remove("hidden");
+    }
+  });
+
+  // Handle login form submission
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+
+    try {
+      const response = await fetch(
+        `/auth/login?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`,
+        { method: "POST" }
+      );
+
+      if (response.ok) {
+        const result = await response.json();
+        isAuthenticated = true;
+        currentToken = password; // Use password as token for now (in production, use proper JWT)
+        currentUsername = result.username;
+        saveAuthState();
+        updateAuthUI();
+        loginModal.classList.add("hidden");
+        loginForm.reset();
+        loginMessage.classList.add("hidden");
+        fetchActivities(); // Refresh to show delete buttons
+      } else {
+        loginMessage.textContent = "Invalid username or password";
+        loginMessage.className = "error";
+        loginMessage.classList.remove("hidden");
+      }
+    } catch (error) {
+      loginMessage.textContent = "Login failed. Please try again.";
+      loginMessage.className = "error";
+      loginMessage.classList.remove("hidden");
+      console.error("Error logging in:", error);
+    }
+  });
+
+  // Handle modal close
+  closeBtn.addEventListener("click", () => {
+    loginModal.classList.add("hidden");
+    loginForm.reset();
+    loginMessage.classList.add("hidden");
+  });
+
+  // Close modal when clicking outside
+  window.addEventListener("click", (event) => {
+    if (event.target === loginModal) {
+      loginModal.classList.add("hidden");
+      loginForm.reset();
+      loginMessage.classList.add("hidden");
+    }
+  });
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -21,7 +137,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const spotsLeft =
           details.max_participants - details.participants.length;
 
-        // Create participants HTML with delete icons instead of bullet points
+        // Create participants HTML with delete icons only for authenticated teachers
         const participantsHTML =
           details.participants.length > 0
             ? `<div class="participants-section">
@@ -30,7 +146,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 ${details.participants
                   .map(
                     (email) =>
-                      `<li><span class="participant-email">${email}</span><button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button></li>`
+                      `<li><span class="participant-email">${email}</span>${
+                        isAuthenticated
+                          ? `<button class="delete-btn" data-activity="${name}" data-email="${email}">❌</button>`
+                          : ""
+                      }</li>`
                   )
                   .join("")}
               </ul>
@@ -73,11 +193,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const activity = button.getAttribute("data-activity");
     const email = button.getAttribute("data-email");
 
+    if (!isAuthenticated) {
+      messageDiv.textContent = "You must be logged in as a teacher to remove students";
+      messageDiv.className = "error";
+      messageDiv.classList.remove("hidden");
+      return;
+    }
+
     try {
       const response = await fetch(
         `/activities/${encodeURIComponent(
           activity
-        )}/unregister?email=${encodeURIComponent(email)}`,
+        )}/unregister?email=${encodeURIComponent(email)}&token=${encodeURIComponent(currentToken)}`,
         {
           method: "DELETE",
         }
@@ -156,5 +283,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Initialize app
+  loadAuthState();
   fetchActivities();
 });

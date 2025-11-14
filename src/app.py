@@ -8,16 +8,41 @@ for extracurricular activities at Mergington High School.
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 import os
 from pathlib import Path
+import json
+from typing import Optional
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+# Load teacher credentials
+def load_teachers():
+    try:
+        with open(os.path.join(Path(__file__).parent, "teachers.json"), "r") as f:
+            data = json.load(f)
+            return {teacher["username"]: teacher["password"] for teacher in data["teachers"]}
+    except Exception as e:
+        print(f"Error loading teachers: {e}")
+        return {}
+
+# Load teacher credentials
+teachers = load_teachers()
 
 # In-memory activity database
 activities = {
@@ -110,9 +135,22 @@ def signup_for_activity(activity_name: str, email: str):
     return {"message": f"Signed up {email} for {activity_name}"}
 
 
+@app.post("/auth/login")
+def login(username: str, password: str):
+    """Login for teachers - validates credentials"""
+    if username in teachers and teachers[username] == password:
+        return {"authenticated": True, "username": username}
+    else:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
-    """Unregister a student from an activity"""
+def unregister_from_activity(activity_name: str, email: str, token: Optional[str] = None):
+    """Unregister a student from an activity - requires teacher authentication"""
+    # Validate teacher is authenticated
+    if not token or token not in teachers.values():
+        raise HTTPException(status_code=403, detail="Teacher authentication required")
+
     # Validate activity exists
     if activity_name not in activities:
         raise HTTPException(status_code=404, detail="Activity not found")
